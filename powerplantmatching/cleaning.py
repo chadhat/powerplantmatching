@@ -105,17 +105,23 @@ def clean_name(df, config=None):
             # if pattern is a list, concat all entries in a case-insensitive regex
             pattern = r"(?i)" + "|".join([rf"\b{p}\b" for p in pattern])
         elif not isinstance(pattern, str):
-            raise ValueError(f"Pattern must be string or list, not {type(pattern)}")
+            raise ValueError(
+                f"Pattern must be string or list, not {type(pattern)}"
+            )
         name = name.str.replace(pattern, key, regex=True)
 
     if config["clean_name"]["remove_duplicated_words"]:
-        name = name.str.replace(r"\b(\w+)(?:\W\1\b)+", r"\1", regex=True, case=False)
+        name = name.str.replace(
+            r"\b(\w+)(?:\W\1\b)+", r"\1", regex=True, case=False
+        )
     name = name.str.strip().str.title().str.replace(r" +", " ", regex=True)
 
     return df.assign(Name=name).sort_values("Name")
 
 
-@deprecated(deprecated_in="5.0", removed_in="0.6", details="Use `clean_name` instead.")
+@deprecated(
+    deprecated_in="5.0", removed_in="0.6", details="Use `clean_name` instead."
+)
 def clean_powerplantname(df, config=None):
     return clean_name(df, config=config)
 
@@ -167,7 +173,9 @@ def gather_and_replace(df, mapping):
             # if pattern is a list, concat all entries in a case-insensitive regex
             pattern = r"(?i)" + "|".join([rf"\b{p}\b" for p in pattern])
         elif not isinstance(pattern, str):
-            raise ValueError(f"Pattern must be string or list, not {type(pattern)}")
+            raise ValueError(
+                f"Pattern must be string or list, not {type(pattern)}"
+            )
         func = lambda ds: ds.str.contains(pattern)
         where = df.astype(str).apply(func).any(axis=1)
         res = res.where(~where, key)
@@ -282,7 +290,9 @@ def gather_technology_info(
     return df.assign(Technology=technology)
 
 
-def gather_set_info(df, search_col=["Name", "Fueltype", "Technology"], config=None):
+def gather_set_info(
+    df, search_col=["Name", "Fueltype", "Technology"], config=None
+):
     """
     Parses in a set of columns for distinct Set specifications.
 
@@ -332,17 +342,21 @@ def clean_technology(df, generalize_hydros=False):
     tech = df["Technology"].dropna()
     if len(tech) == 0:
         return df
-    tech = tech.replace({" and ": ", ", " Power Plant": "", "Battery": ""}, regex=True)
+    tech = tech.replace(
+        {" and ": ", ", " Power Plant": "", "Battery": ""}, regex=True
+    )
     if generalize_hydros:
         tech[tech.str.contains("pump", case=False)] = "Pumped Storage"
         tech[tech.str.contains("reservoir|lake", case=False)] = "Reservoir"
-        tech[tech.str.contains("run-of-river|weir|water", case=False)] = "Run-Of-River"
+        tech[tech.str.contains("run-of-river|weir|water", case=False)] = (
+            "Run-Of-River"
+        )
         tech[tech.str.contains("dam", case=False)] = "Reservoir"
     tech = tech.replace({"Gas turbine": "OCGT"})
     tech[tech.str.contains("combined cycle|combustion", case=False)] = "CCGT"
-    tech[
-        tech.str.contains("steam turbine|critical thermal", case=False)
-    ] = "Steam Turbine"
+    tech[tech.str.contains("steam turbine|critical thermal", case=False)] = (
+        "Steam Turbine"
+    )
     tech[tech.str.contains("ocgt|open cycle", case=False)] = "OCGT"
     tech = (
         tech.str.title()
@@ -353,7 +367,16 @@ def clean_technology(df, generalize_hydros=False):
     return df.assign(Technology=tech)
 
 
-def cliques(df, dataduplicates):
+
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
+import igraph as ig
+
+def find_cliques(graph):
+    # print("Im process {}".format(mp.current_process().name))
+    return list(nx.algorithms.clique.find_cliques(graph))
+    
+def cliques(df, dataduplicates, original=False):
     """
     Locate cliques of units which are determined to belong to the same
     powerplant.  Return the same dataframe with an additional column
@@ -368,18 +391,72 @@ def cliques(df, dataduplicates):
         dataframe or name of the csv-linkfile which determines the
         link within one dataset
     """
-    #    df = read_csv_if_string(df)
-    G = nx.DiGraph()
-    G.add_nodes_from(df.index)
-    G.add_edges_from((r.one, r.two) for r in dataduplicates.itertuples())
-    H = G.to_undirected(reciprocal=True)
+    cliques = []
+    if original:
+        #    df = read_csv_if_string(df)
+        G = nx.DiGraph()
+        G.add_nodes_from(df.index)
+        G.add_edges_from((r.one, r.two) for r in dataduplicates.itertuples())
+        H = G.to_undirected(reciprocal=True)
+        cliques = nx.algorithms.clique.find_cliques(H)
+        cliques = list(cliques)
+    else:
+        list_edges = list(set([frozenset({r.one, r.two}) for r in dataduplicates.itertuples()]))
+        # list_edges = [list(i) for i in list_edges]
+        # graph = ig.Graph(edges=list_edges, directed=False)
+        # print("created graph")
+        # components = graph.decompose()
+        # print("decomposed graph")
+        # for component in components:
+        #     cliques = component.maximal_cliques(min=2, max=4)
+        # print("found cliques")
+        H = nx.Graph(list_edges)
+        components = [H.subgraph(c).copy() for c in nx.connected_components(H)]
+        component_list = []
+        for component in components:
+            edges = component.edges()
+            if len(edges) == 1:
+                for i in edges:
+                    cliques.append(i)
+            else:
+                component_list.append(component)
+        num_cores = 1
+        print(f"Start multiprocessing on {len(component_list)} components using {num_cores} cores")
+        with ProcessPoolExecutor(num_cores) as executor:
+            cliques_tmp = executor.map(find_cliques, component_list)
+        for result in cliques_tmp:
+            for i in result:
+                cliques.append(i)
+        cliques.sort(key=len)      
 
-    grouped = pd.Series(np.nan, index=df.index)
-    for i, inds in enumerate(nx.algorithms.clique.find_cliques(H)):
-        grouped.loc[inds] = i
+        
+        # with open("subgraphs.csv", "w+") as fh:
+        #     for idx,g in enumerate(components,start=1):
+        #         print(f"Component {idx}: Nodes: {g.nodes()} Edges: {g.edges()}", file=fh)
 
+    #grouped = pd.Series(np.nan, index=df.index)
+    
+    if original:
+        grouped = pd.Series(np.nan, index=df.index)
+        for i, inds in enumerate(cliques):
+            grouped.loc[inds] = i
+    else:
+        groupid = []
+        index = []
+        for i, value in enumerate(cliques):
+            groupid.extend([i] * len(value))
+            for j in value:
+                index.append(j)
+        #index = [item for row in cliques for item in row]
+        # Get the nodes not in any clique
+        non_clique_nodes = set(df.index).difference(set(index))
+        for i, value in enumerate(non_clique_nodes):
+            groupid.append(99999+i)
+            index.append(value)
+        grouped = pd.Series(data=groupid, index=index)
+        grouped = grouped.groupby(level=0).max()
+        grouped.name = "grouped"
     return df.assign(grouped=grouped)
-
 
 def aggregate_units(
     df,
@@ -429,8 +506,12 @@ def aggregate_units(
 
     cols = config["target_columns"]
     weighted_cols = list({"Efficiency", "Duration"} & set(cols))
-    str_cols = list({"Name", "Country", "Fueltype", "Technology", "Set"} & set(cols))
-    props_for_groups = {k: v for k, v in AGGREGATION_FUNCTIONS.items() if k in cols}
+    str_cols = list(
+        {"Name", "Country", "Fueltype", "Technology", "Set"} & set(cols)
+    )
+    props_for_groups = {
+        k: v for k, v in AGGREGATION_FUNCTIONS.items() if k in cols
+    }
 
     df = df.assign(
         lat=df.lat.astype(float),
@@ -445,7 +526,9 @@ def aggregate_units(
 
     if country_wise:
         countries = df.Country.unique()
-        duplicates = pd.concat([duke(df.query("Country == @c")) for c in countries])
+        duplicates = pd.concat(
+            [duke(df.query("Country == @c")) for c in countries]
+        )
     else:
         duplicates = duke(df)
 
@@ -455,7 +538,9 @@ def aggregate_units(
 
     df = (
         df.assign(
-            **df[weighted_cols].div(df["Capacity"], axis=0).where(lambda df: df != 0)
+            **df[weighted_cols]
+            .div(df["Capacity"], axis=0)
+            .where(lambda df: df != 0)
         )
         .reset_index(drop=True)
         .pipe(clean_name)

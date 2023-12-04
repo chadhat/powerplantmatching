@@ -78,9 +78,14 @@ def duke(
     """
 
     try:
-        sub.run(["java", "-version"], check=True, stderr=sub.PIPE, stdout=sub.PIPE)
+        sub.run(
+            ["java", "-version"], check=True, stderr=sub.PIPE, stdout=sub.PIPE
+        )
     except sub.CalledProcessError:
-        err = "Java is not installed or not in the system's PATH. Please install Java and ensure it is in your system's PATH, then try again."
+        err = (
+            "Java is not installed or not in the system's PATH. Please install"
+            " Java and ensure it is in your system's PATH, then try again."
+        )
         logger.error(err)
         raise FileNotFoundError(err)
 
@@ -101,7 +106,8 @@ def duke(
 
     try:
         shutil.copyfile(
-            os.path.join(_package_data(duke_config)), os.path.join(tmpdir, "config.xml")
+            os.path.join(_package_data(duke_config)),
+            os.path.join(tmpdir, "config.xml"),
         )
 
         logger.debug("Comparing files: %s", ", ".join(labels))
@@ -113,7 +119,8 @@ def duke(
                 shift_by = datasets[0].index.max() + 1
                 df.index += shift_by
             df.to_csv(
-                os.path.join(tmpdir, "file{}.csv".format(n + 1)), index_label="id"
+                os.path.join(tmpdir, "file{}.csv".format(n + 1)),
+                index_label="id",
             )
             if n == 1:
                 df.index -= shift_by
@@ -171,4 +178,6 @@ def duke(
             logger.debug("Files of the duke run are kept in {}".format(tmpdir))
         else:
             shutil.rmtree(tmpdir)
-            logger.debug("Files of the duke run have been deleted in {}".format(tmpdir))
+            logger.debug(
+                "Files of the duke run have been deleted in {}".format(tmpdir)
+            )
