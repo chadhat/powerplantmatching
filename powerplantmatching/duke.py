@@ -79,7 +79,7 @@ def duke(
 
     try:
         sub.run(
-            ["java", "-version"], check=True, stderr=sub.PIPE, stdout=sub.PIPE
+            ["java", "-version"], check=True, stderr=sub.PIPE, stdout=sub.PIPE, shell=True
         )
     except sub.CalledProcessError:
         err = (
