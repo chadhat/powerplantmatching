@@ -420,7 +420,7 @@ def cliques(df, dataduplicates, original=False):
                     cliques.append(i)
             else:
                 component_list.append(component)
-        num_cores = 2
+        num_cores = int(os.environ.get("NUM_CORES"))
         print(f"Start multiprocessing on {len(component_list)} components using {num_cores} cores")
         with ProcessPoolExecutor(num_cores) as executor:
             cliques_tmp = executor.map(find_cliques, component_list)
